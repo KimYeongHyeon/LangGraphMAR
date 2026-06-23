@@ -1,0 +1,13 @@
+name: unet
+_target_: models.inpainting.unet.system.UNet
+
+algorithm: UNet
+encoder_name: tu-efficientnet_b0
+encoder_depth: 5
+decoder_channels: [256, 128, 64, 32, 16]
+decoder_use_batchnorm: true
+in_channels: 2
+classes: 1
+# activation: softmax
+# device: cuda
+

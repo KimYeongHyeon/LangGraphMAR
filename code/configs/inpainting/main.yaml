@@ -1,0 +1,50 @@
+defaults:
+    - _self_
+    - model: unet
+    # # - dataset
+
+expriment_type: inpainting # or enhancement
+
+use_wandb: false
+device: cuda
+ckpt_path: null
+pretrained: null
+
+
+data:
+    _target_: utils.DataModule.CTMarSinogrmaDataModule
+    root_dir: training_data
+    augment: false
+    anatomy: head # or body
+    gen_random_mask: true 
+
+    task: ${expriment_type}
+    batch_size: 16
+    num_workers: 16   
+
+    prepare_data_per_epoch: false
+    allow_zero_length_dataloader_with_multiple_devices: false
+
+model:
+    _convert_: all
+    batch_size: 32
+    lr: 1e-3
+    warmup_pct: 0.0
+    weight_decay: 0.0
+
+trainer:
+    _target_: pytorch_lightning.Trainer
+    _convert_: all
+    val_check_interval: 1.0
+    max_epochs: 100
+    log_every_n_steps: 10
+    
+    
+
+hydra:
+    output_subdir: config
+    run:
+        # dir: outputs/${model.algorithm}/${data.target}/${data.shot}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+        # dir: outputs/${model.algorithm}/${data.anatomy}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+        dir: outputs/${data.anatomy}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+        

@@ -1,0 +1,23 @@
+# InDuDoNet+ resolved requirements
+# Based on requirement_for_higher version_torch.txt + astra/odl
+# Python 3.10, CUDA 12.x
+
+torch>=1.13.0,<2.0
+torchvision>=0.14.0,<1.0
+numpy>=1.24,<2.0
+scipy>=1.10,<2.0
+scikit-image>=0.20
+scikit-learn>=1.2
+h5py>=3.8
+Pillow>=9.0
+matplotlib
+tqdm
+tensorboardX
+opencv-python
+timm
+lpips
+einops
+pyyaml
+addict
+yapf
+lmdb

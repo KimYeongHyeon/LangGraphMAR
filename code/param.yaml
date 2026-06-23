@@ -1,0 +1,11 @@
+head:
+  mean_image: -520.3360595703125
+  std_image: 937.58935546875
+  mean_label: -544.5751953125
+  std_label: 624.26953125
+
+body:
+  mean_image: -578.9271850585938
+  std_image: 518.4103393554688
+  mean_label: -588.2578735351562
+  std_label: 488.0020446777344
