@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from phasepack import phasecong
 from scipy import ndimage, stats
-from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+from skimage.metrics import structural_similarity
 
 MASK_THRESHOLD: Final = 0.5
 ANNULUS_RADIUS_PX: Final = 30.0
@@ -57,10 +57,6 @@ def body_fov_mask(shape: tuple[int, int]) -> np.ndarray:
     ) ** 2 < radius**2
 
 
-def _normalize01(image: np.ndarray) -> np.ndarray:
-    return np.clip((image + 2000.0) / 8000.0, 0.0, 1.0)
-
-
 def _normalize_uint8(image: np.ndarray) -> np.ndarray:
     return ((np.clip(image, -150.0, 400.0) + 150.0) / 550.0 * 255.0).astype(
         np.uint8
@@ -95,23 +91,27 @@ def annular_roi_metrics(
     ssim_roi = roi[5:-5, 5:-5]
     if not roi.any() or not ssim_roi.any():
         return {metric: math.nan for metric in METRICS}
-    gt01, pred01 = _normalize01(gt_hu), _normalize01(pred_hu)
+    # SSIM on HU (metal zeroed), data_range=255 (the ROI_Analysis_Guide
+    # convention); this reproduces Table 2's low ROI SSIM. Do NOT normalize to
+    # [0,1] with data_range=1 — that over-smooths and inflates SSIM ~0.5->0.95.
     _, ssim_map = structural_similarity(
-        gt01,
-        pred01,
+        gt_hu,
+        pred_hu,
         gaussian_weights=True,
         win_size=11,
-        data_range=1.0,
+        data_range=255.0,
         full=True,
     )
     fsim_map = _fsim_map(_normalize_uint8(gt_hu), _normalize_uint8(pred_hu))
+    # PSNR from the HU MSE with data_range=8000 (AAPM [-2000,6000] window,
+    # UNCLIPPED). Clipping to [0,1] inflates PSNR ~6 dB on artifact-heavy ROIs.
+    mse = float(np.mean((gt_hu[roi] - pred_hu[roi]) ** 2))
+    psnr = math.inf if mse <= 0.0 else 10.0 * math.log10(8000.0**2 / mse)
     return {
         "ssim": float(ssim_map[5:-5, 5:-5][ssim_roi].mean()),
-        "psnr": float(
-            peak_signal_noise_ratio(gt01[roi], pred01[roi], data_range=1.0)
-        ),
+        "psnr": psnr,
         "fsim": float(fsim_map[roi].mean() * 100.0),
-        "rmse": float(np.sqrt(np.mean((gt_hu[roi] - pred_hu[roi]) ** 2))),
+        "rmse": float(math.sqrt(mse)),
     }
 
 
