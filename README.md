@@ -181,7 +181,7 @@ python eval.py --anatomy body --model_path <your_indudonet_checkpoint>
 
 ## Fast projection (optional)
 
-The published pipeline is unchanged. Two opt-in additions make the CPU-bound iterative reconstruction (IR) faster without
+The published pipeline is unchanged. Three opt-in additions make the CPU-bound iterative reconstruction (IR) faster without
 changing the method or, where stated, the results.
 
 **`recon_fast` (drop-in projector).** Same operator and float32 arithmetic as `recon.c`; only the order of independent work
@@ -214,6 +214,32 @@ install_fastproj()          # rebinds fp/bp in utils.projection / algorithm / gr
   median 81.7 s with the original at 4 threads and 43-47 s with `recon_fast` (about 1.8x); at 12 threads 37.1-37.8 s vs
   20.6-20.8 s. Single calls: FP 1.7-3.2x, BP 1.2-2.1x. A pixel-gather BP (about 5x slower) and a row-stripe BP (no speed-up) were tried and dropped; neither
   reproduces the original's chunk partition.
+
+**`utils/gpuproj.py` (GPU projector).** The same FP and BP as `recon.c` on a CUDA GPU (Triton), switched on the same way:
+
+```python
+from utils.gpuproj import install_gpuproj
+install_gpuproj()           # rebinds fp/bp in utils.projection / algorithm / graph
+```
+
+Needs a CUDA GPU, PyTorch with Triton, and a C compiler Triton can find (set `CC` if the machine has no system gcc); nothing to build.
+The geometry comes from the same `param` dict as the original wrappers, so any pixel size works. Check it with
+`python scripts/verify_gpuproj.py` (synthetic phantoms, two pixel sizes, with negative controls).
+
+- **FP** is bit-identical to `recon.FP` (every ray is independent, so the original is deterministic).
+- **BP** is the same ray-driven scatter, but it is **not** bit-identical and **not** a member of the original's run-to-run result set:
+  the original sums float32 per-thread partial images, the kernel scatters with atomic adds in an arbitrary order. Accumulating in
+  float32 first gave a difference about 8x the original's own run-to-run noise, so the accumulation is float64 (the products stay
+  float32). With that the difference to `recon.BP` is as large as two original runs differ from each other (about 3e-7 of the
+  image maximum; 0.012 HU on a body slice). Use `recon_fast` if you need exact membership in the original's result set.
+- **Where it was checked:** the synthetic phantoms in `verify_gpuproj.py`, and 16 CT slices with simulated metal artifacts (pixel
+  sizes 0.56-0.87 mm): FP bit-identical on all 16, BP difference at the original's noise level on all 16. Through the whole
+  workflow (`inference` mode, one trial) the image before enhancement differed from the original by at most 0.005 HU (the original's
+  two runs differ from each other by 0.004 HU) and after enhancement by at most 3.1 HU (the original's two runs differ by 4.4 HU).
+  We did not test other artifact types or the head.
+- **Speed** (shared, busy machine with one H200; read the ratios, not the seconds): one slice through the whole workflow including
+  IR took about 13.9 s with the original `recon`, 8.2 s with `recon_fast` (12 threads) and 0.23 s with `gpuproj`, about 60x. What is
+  left is the numpy filtering, the three networks and the per-call host-device copies. Model loading (about 25 s) is paid once per process.
 
 **`utils/ir_modes.py` (best-trial metal image).** The threshold search never reads the IR output `img_m`, and the workflow keeps
 it only for the last trial. To re-insert the metal into the final image you need the *best* trial's `img_m`:
@@ -280,6 +306,7 @@ Program, Seoul National University), the Korea Health Technology R&D Project
 
 In reverse chronological order.
 
+- 2026-10-08: added the opt-in GPU projector (`utils/gpuproj.py`, `scripts/verify_gpuproj.py`): FP bit-identical to `recon`, BP at the original's run-to-run noise level (branch `feat/fast-projection`), by Yeonghyeon Kim
 - 2026-10-08: added the opt-in fast projector `recon_fast` (`utils/fastproj.py`, `scripts/verify_fastproj.py`) and the
   `RecordIR` / `DeferredIR` modes with per-case FOV (`utils/ir_modes.py`); the published code paths are untouched (branch `feat/fast-projection`), by Yeonghyeon Kim
 - 2026-07-12: fixed the ROI metrics to match the paper's Table 2 definitions (`091e0b6`), by Yeonghyeon Kim
