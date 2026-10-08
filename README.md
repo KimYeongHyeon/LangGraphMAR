@@ -26,7 +26,7 @@ automatically searches for the per-case optimal metal threshold.
 LangGraphMAR/
 ├── code/                       # Main reproduction code (run scripts from here)
 │   ├── utils/                  # ct.py (geometry SoT), metric.py (eval SoT),
-│   │                           # dataset.py, projection.py, graph.py, ...
+│   │                           # dataset.py, projection.py, graph.py, fastproj.py, ir_modes.py, ...
 │   ├── training/               # train_inpainting / train_enhancement / train_gc / train_*_mar
 │   ├── scripts/                # run_threshold_sweep.py + metric scripts
 │   ├── pl_modules/             # PyTorch Lightning modules
@@ -34,6 +34,7 @@ LangGraphMAR/
 │   ├── paper_results/          # metric / significance scripts
 │   ├── index/                  # train/val/test split indices (*.pkl)
 │   ├── CT_recon_fanbeam_python_openmp/   # C extension (forward/back projection)
+│   │   └── recon_fast/         # opt-in order-preserving fast projector (see below)
 │   ├── AAPM_datachallenge/     # AAPM geometry / simulation references
 │   ├── param.yaml              # per-anatomy normalization statistics
 │   └── requirements.txt
@@ -178,6 +179,53 @@ python eval.py --anatomy body --model_path <your_indudonet_checkpoint>
 | Image size | 512 x 512 |
 | Reconstruction FOV | head 220.16 mm, body 400 mm |
 
+## Fast projection (optional)
+
+The published pipeline is unchanged. Two opt-in additions make the CPU-bound iterative reconstruction (IR) faster without
+changing the method or, where stated, the results.
+
+**`recon_fast` (drop-in projector).** Same operator and float32 arithmetic as `recon.c`; only the order of independent work
+changes. Build it next to `recon` and switch it on before building the graph:
+
+```bash
+cd code/CT_recon_fanbeam_python_openmp/recon_fast
+python setup_fast.py build_ext --inplace      # needs an AVX2 CPU; flags: -O3 -mavx2 -mno-fma -ffp-contract=off
+cp recon_fast*.so ../../                      # next to recon*.so in code/
+cd ../..
+python scripts/verify_fastproj.py             # exact equivalence checks against `recon` (OMP_NUM_THREADS=4 by default)
+```
+
+```python
+from utils.fastproj import install_fastproj
+install_fastproj()          # rebinds fp/bp in utils.projection / algorithm / graph; P=128 by default
+```
+
+- **FP** is bit-identical to the original for any thread count.
+- **BP**: the original is an OpenMP static-schedule reduction whose per-thread copies are added in arrival order, so its
+  output varies from run to run (relative L2 about 5e-8 at 4 threads, about 2e-7 at 128). `recon_fast` reproduces the same
+  `P` chunks bit for bit and adds them in a fixed order, so its output is one member of the original's run-to-run result set.
+  `P` must equal the original's team size to share its partition; libgomp uses every visible core when `OMP_NUM_THREADS` is
+  unset (128 on the machine used for the experiments), hence the default `P=128`. For that case all 128 chunk partial sums
+  were compared with the original's (single-chunk inputs, 128 runs) and matched exactly on the checked slice;
+  `verify_fastproj.py` repeats the check for a small geometry at `T=4`.
+- **Threads:** with `recon_fast` you may set `OMP_NUM_THREADS` freely, the result does not change. With the original
+  `recon` do **not** set it: that moves the chunk boundaries and changes the result (about 4e-7 relative to the 128-thread run).
+- **Speed** (shared, CPU-saturated 20-core container; read the ratios, not the seconds): one IR call (11 FP + 12 BP) took a
+  median 81.7 s with the original at 4 threads and 43-47 s with `recon_fast` (about 1.8x); at 12 threads 37.1-37.8 s vs
+  20.6-20.8 s. Single calls: FP 1.7-3.2x, BP 1.2-2.1x. A pixel-gather BP (about 5x slower) and a row-stripe BP (no speed-up) were tried and dropped; neither
+  reproduces the original's chunk partition.
+
+**`utils/ir_modes.py` (best-trial metal image).** The threshold search never reads the IR output `img_m`, and the workflow keeps
+it only for the last trial. To re-insert the metal into the final image you need the *best* trial's `img_m`:
+
+- `RecordIR` (default) leaves the graph exactly as published and records every trial's `img_m`.
+- `DeferredIR` skips IR on every trial and runs it once, for the best trial, from a captured `sino_m`. Nodes, their order,
+  the search and all decisions are unchanged; only when IR runs. On two slices (8 trials each) the best trial, threshold,
+  `gc` trace, `img_b` and `img_m` matched `RecordIR` within the original's own run-to-run noise, and a slice took 283-320 s
+  instead of 831-964 s (CPU run, 4 threads, same contended machine). One slice failed a strict single-pair noise rule by up
+  to 25% on five arrays (the same rule also flagged `img_b`, which `DeferredIR` cannot touch), so treat the equivalence as
+  verified on few slices and re-check on your data.
+
 ## Notes and caveats
 
 - **Working directory:** run scripts from `code/` (some scripts `chdir` there).
@@ -222,3 +270,13 @@ This work was supported by IITP (NO.RS-2021-II211343, AI Graduate School
 Program, Seoul National University), the Korea Health Technology R&D Project
 (KHIDI, RS-2025-02307233), and the "Advanced GPU Utilization Support Program"
 (MSIT, Republic of Korea).
+
+## History
+
+In reverse chronological order.
+
+- 2026-10-08: added the opt-in fast projector `recon_fast` (`utils/fastproj.py`, `scripts/verify_fastproj.py`) and the
+  `RecordIR` / `DeferredIR` modes (`utils/ir_modes.py`); the published code paths are untouched (branch `feat/fast-projection`), by Yeonghyeon Kim
+- 2026-07-12: fixed the ROI metrics to match the paper's Table 2 definitions (`091e0b6`), by Yeonghyeon Kim
+- 2026-07-11: added the reconstructed annular ROI evaluator (`163b2d2`), by Yeonghyeon Kim
+- 2026-06-23: initial public release of LangGraph-MAR (`79fe6e0`), by Yeonghyeon Kim
