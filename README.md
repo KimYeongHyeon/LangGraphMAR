@@ -226,6 +226,11 @@ it only for the last trial. To re-insert the metal into the final image you need
   to 25% on five arrays (the same rule also flagged `img_b`, which `DeferredIR` cannot touch), so treat the equivalence as
   verified on few slices and re-check on your data.
 
+The repository's `IterativeReconstruction` uses a fixed field of view (400 mm body, 220.16 mm head, the AAPM constants). If your
+pixel size differs, set `utils.ir_modes.SLICE_FOV["mm"] = pixel_size * 512` per case and call `install_slice_fov(UG)`; otherwise
+`img_m` comes out at the wrong scale (we saw median body-minus-metal RMSE of the re-inserted image rise from about 170 HU to about 970 HU
+as the pixel size moved 0.1-0.2 mm away from 0.78125 mm).
+
 ## Notes and caveats
 
 - **Working directory:** run scripts from `code/` (some scripts `chdir` there).
@@ -276,7 +281,7 @@ Program, Seoul National University), the Korea Health Technology R&D Project
 In reverse chronological order.
 
 - 2026-10-08: added the opt-in fast projector `recon_fast` (`utils/fastproj.py`, `scripts/verify_fastproj.py`) and the
-  `RecordIR` / `DeferredIR` modes (`utils/ir_modes.py`); the published code paths are untouched (branch `feat/fast-projection`), by Yeonghyeon Kim
+  `RecordIR` / `DeferredIR` modes with per-case FOV (`utils/ir_modes.py`); the published code paths are untouched (branch `feat/fast-projection`), by Yeonghyeon Kim
 - 2026-07-12: fixed the ROI metrics to match the paper's Table 2 definitions (`091e0b6`), by Yeonghyeon Kim
 - 2026-07-11: added the reconstructed annular ROI evaluator (`163b2d2`), by Yeonghyeon Kim
 - 2026-06-23: initial public release of LangGraph-MAR (`79fe6e0`), by Yeonghyeon Kim
